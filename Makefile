@@ -1,25 +1,20 @@
 CC = gcc
 LD32 = -m32
 LDFLAGS = --static 
-SUBDIR = ./examples
 
-all: agent emulate build_examples
+all: agents build_examples
 
-agent: 
-	${CC} $@.c -o $@64
-	${CC} $@.c ${LD32} -o $@32
-
-emulate:
-	${CC} $@.c -lpthread -lunicorn -o $@
+agents:
+	${MAKE} -C ./agent
 
 build_examples:
-	${MAKE} -C ${SUBDIR}
+	${MAKE} -C ./examples
 
 .PHONY: clean
 clean:
-	rm ${SUBDIR}/*.dyn 
-	rm ${SUBDIR}/*.packed 
-	rm *32* *64*
-	rm dumped* || true
-	rm emulate
+	rm ./examples/*.dyn 
+	rm ./examples/*.packed 
+	rm ./agent/*32* ./agent/*64*
+	rm ./agent/dumped* || true
+	rm ./agent/emulate
 

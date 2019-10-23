@@ -21,6 +21,8 @@
 #include <linux/connector.h>
 #include <linux/netlink.h>
 #include <linux/cn_proc.h>
+#include <spawn.h>
+#include <sys/wait.h>
 
 #define COLOR_RED "\033[0;31m"
 #define COLOR_GREEN "\033[0;32m"
@@ -248,54 +250,6 @@ bool dump_memory_artifacts(int pid) {
 	return true;
 }
 
-/*event filter to catch process start and termination*/
-bool filter_handler(struct cn_msg *cn_hdr, int pid, const char *target_process) {
-	uint8_t exe_path[1024], exe_name[1024];
-	struct proc_event *proc_ev = (struct proc_event *)cn_hdr->data;
-	int fd, status, child;
-	size_t exe_name_len;
-
-	if(proc_ev->event_data.exec.process_pid != pid) {
-		return false;
-	}
-
-	snprintf(exe_path, sizeof(exe_path), "/proc/%d/cmdline", pid);
-	fd = open(exe_path, O_RDONLY);
-	exe_name_len = read(fd, exe_name, sizeof(exe_name));
-
-	if (!strncmp(target_process, exe_name, strlen(target_process))) {
-		switch(proc_ev->what) {
-			case PROC_EVENT_FORK:
-				printf("[FORK] process: %s\n", exe_name);
-				break;
-			case PROC_EVENT_EXEC:
-				printf("[EXEC] process: %s\n", exe_name);
-			    
-			      	ptrace(PTRACE_ATTACH, pid, NULL, NULL);
-				while(waitpid(pid, &status, 0) && ! WIFEXITED(status)) {
-			      		struct user_regs_struct regs; 
-			      		ptrace(PTRACE_GETREGS, pid, NULL, &regs);
-			      		if (OREG(regs) == SYS_EXITGROUP || OREG(regs) == SYS_EXIT) {
-			      			dump_memory_artifacts(pid);
-					} else if (OREG(regs) == SYS_PTRACE) { // replacing ptrace syscall
-			      			OREG(regs) = SYS_GETPID;
-						REG(regs) = SYS_GETPID;
-						ptrace(PTRACE_SETREGS, pid, NULL, &regs);
-					}
-			      		ptrace(PTRACE_SYSCALL, pid, NULL, NULL);
-			    	}
-			      	ptrace(PTRACE_DETACH, pid, NULL, NULL);
-				break;
-			case PROC_EVENT_EXIT:
-				printf("[EXIT] process: %s\n", exe_name);
-				return true;
-			default:
-				break;
-		}
-	}
-	return false;
-}
-
 /*function to be executed on SIGALRM signal*/
 void handle_alarm(int sig) {
 	dump_memory_artifacts(g_Pid);
@@ -303,119 +257,45 @@ void handle_alarm(int sig) {
 	exit(0);
 }
 
-/*initialize netlink socket to retrieve events from kernel to apply event filter*/
-int init_filter(const char *target_process_name, int timeout) {
-	int nl_sock;
-	int pid;
-	struct sockaddr_nl agent_nl;
-	struct sockaddr_nl kernl_nl;
-	struct sockaddr_nl recv_nl;
-	struct nlmsghdr *nl_hdr;
-	struct cn_msg *cn_hdr;
-	enum proc_cn_mcast_op *mcop_msg;
-	socklen_t recv_nl_len;
-	uint8_t *buff;
-	size_t recv_len = 0;
-	int status;
+int handle_file(char *target_process_name, char **environ, int timeout) {
+    pid_t pid;
+    int status;
+    char *argv[] = {target_process_name, NULL}; 
 
-	if((nl_sock = socket(PF_NETLINK, SOCK_DGRAM, NETLINK_CONNECTOR)) == -1) {
-		perror("socket");
-		return -1;
+    status = posix_spawn(&pid, target_process_name, NULL, NULL, argv, environ);
+    if (status == 0) {
+	if (timeout) {
+		g_Pid = pid;
+		signal(SIGALRM, handle_alarm);
+		alarm(timeout);
 	}
-
-	agent_nl.nl_family = AF_NETLINK;
-	agent_nl.nl_groups = CN_IDX_PROC;
-	agent_nl.nl_pid = getpid();
-
-	kernl_nl.nl_family = AF_NETLINK;
-	kernl_nl.nl_groups = CN_IDX_PROC;
-	kernl_nl.nl_pid = 1;
-
-	if(bind(nl_sock, (struct sockaddr*)&agent_nl, sizeof(agent_nl)) == -1) {
-		perror("bind");
-		return -1;
+    
+	ptrace(PTRACE_ATTACH, pid, NULL, NULL);
+	while(waitpid(pid, &status, 0) && ! WIFEXITED(status)) {
+		struct user_regs_struct regs; 
+		ptrace(PTRACE_GETREGS, pid, NULL, &regs);
+		if (OREG(regs) == SYS_EXITGROUP || OREG(regs) == SYS_EXIT) {
+			dump_memory_artifacts(pid);
+		} else if (OREG(regs) == SYS_PTRACE) { // replacing ptrace syscall
+			OREG(regs) = SYS_GETPID;
+			REG(regs) = SYS_GETPID;
+			ptrace(PTRACE_SETREGS, pid, NULL, &regs);
+		}
+		ptrace(PTRACE_SYSCALL, pid, NULL, NULL);
 	}
+	ptrace(PTRACE_DETACH, pid, NULL, NULL);
 
-	buff = calloc(1, BUFF_SIZE);
-
-	nl_hdr = (struct nlmsghdr*)buff;
-	cn_hdr = (struct cn_msg*)NLMSG_DATA(nl_hdr);
-	mcop_msg = (enum proc_cn_mcast_op*)&cn_hdr->data[0];
-
-	*mcop_msg = PROC_CN_MCAST_LISTEN;
-
-	nl_hdr->nlmsg_len = SEND_MESSAGE_LEN;
-	nl_hdr->nlmsg_type = NLMSG_DONE;
-	nl_hdr->nlmsg_flags = 0;
-	nl_hdr->nlmsg_seq = 0;
-	nl_hdr->nlmsg_pid = getpid();
-
-	cn_hdr->id.idx = CN_IDX_PROC;
-	cn_hdr->id.val = CN_VAL_PROC;
-	cn_hdr->seq = 0;
-	cn_hdr->ack = 0;
-	cn_hdr->len = sizeof(enum proc_cn_mcast_op);
-	
-	pid = fork();
-	if(pid) {
-		if (timeout) {
-			g_Pid = pid;
-			signal(SIGALRM, handle_alarm);
-			alarm(timeout);
-		}
-
-		puts("[+] Sending PROC connector: PROC_CN_MCAST_LISTEN");
-		if (send(nl_sock, nl_hdr, nl_hdr->nlmsg_len, 0) != nl_hdr->nlmsg_len) {
-			perror("send");
-			close(nl_sock);
-			return -1;
-		}
-		if(*mcop_msg == PROC_CN_MCAST_IGNORE) {
-			puts("[-] PROC CONNECTOR returned PROC_MC_MCAST_IGNORE");
-			close(nl_sock);
-			return -1;
-		}
-		puts("[+] Reading process events from PROC CONNECTOR");
-
-		for(memset(buff, 0, sizeof(buff)), recv_nl_len = sizeof(recv_nl);
-		  ; memset(buff, 0, sizeof(buff)), recv_nl_len = sizeof(recv_nl)) {
-			struct nlmsghdr *nlh = (struct nlmsghdr*)buff;
-			memcpy(&recv_nl, &kernl_nl, sizeof(recv_nl));
-			recv_len = recvfrom(nl_sock, buff, BUFF_SIZE, 0,
-					(struct sockaddr*)&recv_nl, &recv_nl_len);
-			if (recv_nl.nl_pid != 0)
-				continue;
-			if (recv_len < 1)
-				continue;
-			while (NLMSG_OK(nlh, recv_len)) {
-				cn_hdr = NLMSG_DATA(nlh);
-				if (nlh->nlmsg_type == NLMSG_NOOP)
-					continue;
-				if ((nlh->nlmsg_type == NLMSG_ERROR) ||
-				    (nlh->nlmsg_type == NLMSG_OVERRUN))
-					break;
-				if(filter_handler(cn_hdr, pid, target_process_name)) {
-					return 1;
-				}
-				if (nlh->nlmsg_type == NLMSG_DONE)
-					break;
-				nlh = NLMSG_NEXT(nlh, recv_len);
-			}
-		}
-	} else {
-		execv(target_process_name, (char *[]){(char *)target_process_name, NULL, NULL });
-		_exit(0);
-	}
-	return 0;
+    } else {
+        printf("posix_spawn: %s\n", strerror(status));
+    }
 }
-
-int main(int argc, char ** argv) {
+int main(int argc, char ** argv, char **envp) {
 	if (geteuid() != 0 || argc < 2) {
 		print_usage(argv[0]);
 		return 0;
 	}
 
 	setvbuf(stdout, NULL, _IONBF, 0);
-	return init_filter(argv[1], argc == 3 ? atoi(argv[2]) : 0 );
+	return handle_file(argv[1], envp, argc == 3 ? atoi(argv[2]) : 0 );
 }
 
