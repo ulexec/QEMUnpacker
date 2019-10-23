@@ -1,0 +1,3 @@
+[submodule "linux-images"]
+	path = linux-images
+	url = http://github.com/ulexec/linux-images

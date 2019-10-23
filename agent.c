@@ -60,6 +60,7 @@
 
 static int g_Pid;
 
+/*Fixes elf image for gene-extraction to be possible*/
 void fix_elf(FILE **fd, unsigned long delta) {
 	size_t file_size;
 	char *buff;
@@ -107,6 +108,7 @@ void fix_elf(FILE **fd, unsigned long delta) {
 	printf(COLOR_GREEN"[+] ELF image sucessfully dumped"COLOR_RESET"\n");
 }
 
+/*process_vm_readv syscall wrapper function*/
 char * read_mem_readv(unsigned long start_address, long length, int pid) {
 	struct iovec local[1];
 	struct iovec remote[1];
@@ -125,6 +127,7 @@ char * read_mem_readv(unsigned long start_address, long length, int pid) {
 	return local[0].iov_base;
 }  
 
+/*dumps process memory and writes it to a specific file offset*/
 int dump_memory_to_file(unsigned long start_address, long length, int pid, FILE **fd, unsigned long mapping_offset) {
 	char *buff;
 	buff = read_mem_readv(start_address, length, pid);
@@ -139,7 +142,7 @@ int dump_memory_to_file(unsigned long start_address, long length, int pid, FILE 
 	return 0;
 }
 
-
+/*dumps a specific elf image at a given virtual address*/
 int dump_elf(long long start_address, long length, int pid, FILE **fd, unsigned long mapping_offset) {
 	ElfW(Ehdr) *ehdr;
 	ElfW(Phdr) *phdr;
@@ -170,12 +173,13 @@ int dump_elf(long long start_address, long length, int pid, FILE **fd, unsigned 
 	return 0;
 }
 
-
+/*prints agent's binaries usage*/
 void print_usage(const char *program_name) {
 	printf("[*] Usage: sudo %s <process to execute> [<timeout>]\n", program_name);
 	return;
 }
 
+/*dumps all existant elf images which are not dynamically linked libraries*/
 bool dump_memory_artifacts(int pid) {
 	char pMapsFilename[1024];
 	char pCommFilename[1024];
@@ -244,6 +248,7 @@ bool dump_memory_artifacts(int pid) {
 	return true;
 }
 
+/*event filter to catch process start and termination*/
 bool filter_handler(struct cn_msg *cn_hdr, int pid, const char *target_process) {
 	uint8_t exe_path[1024], exe_name[1024];
 	struct proc_event *proc_ev = (struct proc_event *)cn_hdr->data;
@@ -272,7 +277,7 @@ bool filter_handler(struct cn_msg *cn_hdr, int pid, const char *target_process) 
 			      		ptrace(PTRACE_GETREGS, pid, NULL, &regs);
 			      		if (OREG(regs) == SYS_EXITGROUP || OREG(regs) == SYS_EXIT) {
 			      			dump_memory_artifacts(pid);
-					} else if (OREG(regs) == SYS_PTRACE) {
+					} else if (OREG(regs) == SYS_PTRACE) { // replacing ptrace syscall
 			      			OREG(regs) = SYS_GETPID;
 						REG(regs) = SYS_GETPID;
 						ptrace(PTRACE_SETREGS, pid, NULL, &regs);
@@ -291,12 +296,14 @@ bool filter_handler(struct cn_msg *cn_hdr, int pid, const char *target_process) 
 	return false;
 }
 
+/*function to be executed on SIGALRM signal*/
 void handle_alarm(int sig) {
 	dump_memory_artifacts(g_Pid);
 	kill(0, SIGQUIT);
 	exit(0);
 }
 
+/*initialize netlink socket to retrieve events from kernel to apply event filter*/
 int init_filter(const char *target_process_name, int timeout) {
 	int nl_sock;
 	int pid;
