@@ -49,15 +49,23 @@
 #define SYS_EXIT 60
 #define SYS_PTRACE 101
 #define SYS_GETPID  39
-#define OREG(reg) reg.orig_rax
-#define REG(reg) reg.rax
+	#ifdef __x86_64__
+	#define OREG(reg) reg.orig_rax
+	#define REG(reg) reg.rax
+	#endif
 #else
 #define SYS_EXITGROUP 252
 #define SYS_EXIT 1
 #define SYS_PTRACE 26
 #define SYS_GETPID 20
-#define OREG(reg) reg.orig_eax
-#define REG(reg) reg.eax
+	#ifdef __i386__
+	#define OREG(reg) reg.orig_eax
+	#define REG(reg) reg.eax
+	#elif __arm__
+	#define SYS_EXIT0 248
+	#define OREG(reg) reg.uregs[7]
+	#define REG(reg) reg.uregs[0]
+	#endif
 #endif
 
 static int g_Pid;
@@ -272,15 +280,26 @@ int handle_file(char *target_process_name, char **environ, int timeout) {
     
 	ptrace(PTRACE_ATTACH, pid, NULL, NULL);
 	while(waitpid(pid, &status, 0) && ! WIFEXITED(status)) {
-		struct user_regs_struct regs; 
+#ifdef __arm__
+		struct user_regs regs;
+#else 
+		struct user_regs_struct regs;
+#endif	
 		ptrace(PTRACE_GETREGS, pid, NULL, &regs);
+
 		if (OREG(regs) == SYS_EXITGROUP || OREG(regs) == SYS_EXIT) {
 			dump_memory_artifacts(pid);
-		} else if (OREG(regs) == SYS_PTRACE) { // replacing ptrace syscall
+		} else if (OREG(regs) == SYS_PTRACE) { // replacing ptrace syscall (not working on arm)
 			OREG(regs) = SYS_GETPID;
 			REG(regs) = SYS_GETPID;
 			ptrace(PTRACE_SETREGS, pid, NULL, &regs);
 		}
+#ifdef __arm__
+		else if (OREG(regs) == SYS_EXIT0) {
+			dump_memory_artifacts(pid);
+		}
+#endif	
+
 		ptrace(PTRACE_SYSCALL, pid, NULL, NULL);
 	}
 	ptrace(PTRACE_DETACH, pid, NULL, NULL);

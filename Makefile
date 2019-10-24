@@ -14,7 +14,7 @@ build_examples:
 clean:
 	rm ./examples/*.dyn 
 	rm ./examples/*.packed 
-	rm ./agent/*32* ./agent/*64*
+	rm ./agent/*i386* ./agent/*x86_64* ./agent/*arm*
 	rm ./agent/dumped* || true
 	rm ./agent/emulate
 
