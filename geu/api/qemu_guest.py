@@ -89,33 +89,35 @@ class QEMUGuest():
     def run_and_analyze(self, exec_time):
         log.debug('Starting analysis')
         self.send_command(f'/root/agent {self._file_name} {exec_time}')
-        time.sleep(3 + exec_time)
+        time.sleep(3 + exec_time) # keep that extra time otherwise output doesn't extract
 
     def poweroff_vm(self):
         self._proc.sendline('poweroff')
-        time.sleep(3)
+        log.info('Shutting down virtual machine')
+        time.sleep(3) # give enough time for machine to shut down
         self._proc.logfile.close()
         self._is_running = False
 
     def extract_output(self, keep_fs=False):
-        process = subprocess.Popen([f'{home_path}/geu/bin/e2ls', 
-                                    f'{self._file.data_dir}/rootfs:/root'], 
-                                    stdout=subprocess.PIPE)
+        list_dumped_images = [
+                f'{home_path}/geu/bin/e2ls', 
+                f'{self._file.data_dir}/rootfs:/root'
+        ]
+        process = subprocess.Popen(list_dumped_images, stdout=subprocess.PIPE)
         out, err = process.communicate()
 
-        for entry in out.split():
-            if b'dumped' not in entry:
-                continue
+        dumped_images = [entry.decode('utf-8') for entry in out.split() if b'dumped' in entry]
+        log.debug('Collecting %d dumped images ...' % len(dumped_images))
 
-            file_name = entry.decode('utf-8')
-            extract_dumped = (
-                    f'{home_path}/geu/bin/e2cp '
-                    f'{self._fs}:/root/{file_name} '
+        for entry in dumped_images:
+            extract_dumped = [
+                    f'{home_path}/geu/bin/e2cp',
+                    f'{self._fs}:/root/{entry}',
                     f'{self._file.data_dir}/'
-            )
-            os.system(extract_dumped)
-
-        log.debug('Memory Artifacts have been extracted')
+            ]
+            process = subprocess.Popen(extract_dumped, stdout=subprocess.PIPE)
+            out, err = process.communicate()
+        log.debug('Memory Artifacts have been extracted sucessfully')
 
         if not keep_fs:
             os.system(f'rm {self._fs}')

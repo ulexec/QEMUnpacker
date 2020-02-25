@@ -1,5 +1,6 @@
-home_path = './../..'
+home_path = '/home/intezer'
 storage_path = f'{home_path}/geu/data/'
+output_filename = 'output.zip'
 
 images = {
     'x86_64' : {

@@ -49,6 +49,7 @@
 #define SYS_EXIT 60
 #define SYS_PTRACE 101
 #define SYS_GETPID  39
+#define SYS_MUNMAP  91
 	#ifdef __x86_64__
 	#define OREG(reg) reg.orig_rax
 	#define REG(reg) reg.rax
@@ -58,6 +59,7 @@
 #define SYS_EXIT 1
 #define SYS_PTRACE 26
 #define SYS_GETPID 20
+#define SYS_MUNMAP 11
 	#ifdef __i386__
 	#define OREG(reg) reg.orig_eax
 	#define REG(reg) reg.eax
@@ -106,7 +108,7 @@ void fix_elf(FILE **fd, unsigned long delta) {
 						dyn->d_tag == DT_PLTGOT ||
 						dyn->d_tag == DT_JMPREL ||
 						dyn->d_tag == DT_GNU_HASH) {
-					dyn->d_un.d_ptr &= ~0xfffff000;
+					dyn->d_un.d_ptr -= delta;
 				}
 				dyn++;
 			}	
@@ -287,7 +289,9 @@ int handle_file(char *target_process_name, char **environ, int timeout) {
 #endif	
 		ptrace(PTRACE_GETREGS, pid, NULL, &regs);
 
-		if (OREG(regs) == SYS_EXITGROUP || OREG(regs) == SYS_EXIT) {
+		if (OREG(regs) == SYS_EXITGROUP 
+				|| OREG(regs) == SYS_EXIT
+				|| OREG(regs) == SYS_MUNMAP) {
 			dump_memory_artifacts(pid);
 		} else if (OREG(regs) == SYS_PTRACE) { // replacing ptrace syscall (not working on arm)
 			OREG(regs) = SYS_GETPID;

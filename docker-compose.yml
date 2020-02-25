@@ -1,0 +1,10 @@
+version: '3'
+
+services:
+        geu:
+                build:
+                        context: .
+                container_name: geu
+                restart: always
+                ports:
+                        - "4321:4321"

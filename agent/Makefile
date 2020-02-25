@@ -2,7 +2,7 @@ CC = gcc
 LD32 = -m32
 LDFLAGS = --static 
 
-all: agent emulate
+all: agent 
 
 agent: 
 	${CC} $@.c -o $@-x86_64

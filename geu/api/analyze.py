@@ -24,8 +24,8 @@ def main(args):
 
     qemu.start_vm()
     qemu.run_and_analyze(exec_time)
-    qemu.extract_output()
     qemu.poweroff_vm()
+    qemu.extract_output()
 
 if __name__ == '__main__':
     if len(sys.argv) != 4:
